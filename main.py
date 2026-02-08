@@ -14,6 +14,15 @@ from storage import (
 from auth import setup_master_password, login
 from crypto import encrypt_field, decrypt_field
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from rich.align import Align
+
+console = Console()
+
+
 
 def main():
     initialize_db()
@@ -23,20 +32,13 @@ def main():
 
     try:
         key = login()
+        show_banner()
     except Exception as e:
         print(str(e))
         return
 
     while True:
-        print("\nRX7Pass Menu")
-        print("1. Add password")
-        print("2. List services")
-        print("3. View entry")
-        print("4. Delete Entry")
-        print("5. Copy password to clipboard")
-        print("6. Generate password")
-        print("7. Exit")
-
+        show_menu()
         choice = input("Select: ").strip()
 
         if choice == "1":
@@ -57,49 +59,41 @@ def main():
         elif choice == "2":
             entries = fetch_all_entries()
             if not entries:
-                print("No entries found.")
-                continue
-
-            for idx, (eid, service_enc, user_enc) in enumerate(entries, 1):
-                service = decrypt_field(service_enc, key)
-                username = decrypt_field(user_enc, key)
-                print(f"{idx}. {service} ({username})")
+                console.print("[yellow]No entries found.[/yellow]")
+            else:
+                show_entries_table(entries, key)
 
         elif choice == "3":
             entries = fetch_all_entries()
+
             if not entries:
-                print("No entries available.")
+                warning("No entries available.")
                 continue
 
-            for idx, (eid, service_enc, user_enc) in enumerate(entries, 1):
-                service = decrypt_field(service_enc, key)
-                username = decrypt_field(user_enc, key)
-                print(f"{idx}. {service} ({username})")
+            show_entries_table(entries, key)
 
             try:
-                selection = int(input("Select entry number: ")) - 1
+                selection = int(input("Select entry number to view: ")) - 1
                 entry_id = entries[selection][0]
             except (ValueError, IndexError):
-                print("Invalid selection.")
+                error("Invalid selection.")
                 continue
 
             entry = fetch_entry_by_id(entry_id)
             if not entry:
-                print("Entry not found.")
+                error("Entry not found.")
                 continue
 
-            service, username, password, notes = entry
+            service_enc, user_enc, pass_enc, notes_enc = entry
 
-            print("\nService:", decrypt_field(service, key))
-            print("Username:", decrypt_field(username, key))
-            print("Password: ********")
+            service = decrypt_field(service_enc, key)
+            username = decrypt_field(user_enc, key)
+            password = decrypt_field(pass_enc, key)
+            notes = decrypt_field(notes_enc, key) if notes_enc else ""
 
-            reveal = input("Reveal password? (y/N): ").lower()
-            if reveal == "y":
-                print("Password:", decrypt_field(password, key))
+            show_entry(service, username, password, notes)
 
-            if notes:
-                print("Notes:", decrypt_field(notes, key))
+
         
         elif choice == "4":
             entries = fetch_all_entries()
@@ -116,7 +110,7 @@ def main():
                 selection = int(input("Select entry number to delete: ")) - 1
                 entry_id = entries[selection][0]
             except (ValueError, IndexError):
-                print("Invalid selection.")
+                print(error("Invalid selection."))
                 continue
 
             confirm = input("Type DELETE to confirm: ")
@@ -125,12 +119,12 @@ def main():
                 continue
 
             delete_entry(entry_id)
-            print("Entry deleted.")
+            print(success("Entry deleted."))
 
         elif choice == "5":
             entries = fetch_all_entries()
             if not entries:
-                print("No entries available.")
+                print(warning("No entries available."))
                 continue
 
             for idx, (eid, service_enc, user_enc) in enumerate(entries, 1):
@@ -142,7 +136,7 @@ def main():
                 selection = int(input("Select entry number: ")) - 1
                 entry_id = entries[selection][0]
             except (ValueError, IndexError):
-                print("Invalid selection.")
+                print(error("Invalid selection."))
                 continue
 
             entry = fetch_entry_by_id(entry_id)
@@ -174,17 +168,17 @@ def main():
                 use_symbols = input("Include symbols? (y/n): ").lower() == "y"
                 use_digits = input("Include numbers? (y/n): ").lower() == "y"
                 use_upper = input("Include uppercase? (y/n): ").lower() == "y"
+            
+            except ValueError as e:
+                print(f"Error: {e}")
+                continue
 
-                password = generate_password(
+            password = generate_password(
                     length=length,
                     use_upper=use_upper,
                     use_digits=use_digits,
                     use_symbols=use_symbols
-                )
-
-            except ValueError as e:
-                print(f"Error: {e}")
-                continue
+            )
 
             pyperclip.copy(password)
             print("Password copied to clipboard.")
@@ -200,11 +194,11 @@ def main():
             ).start()
 
         elif choice == "7":
-            print("Vault locked.")
+            print(console.print("\n🔒 Vault locked. Goodbye.", style="dim"))
             break
 
         else:
-            print("Invalid option.")
+            print(error("Invalid selection."))
 
 def clear_clipboard_after_delay(delay: int):
     time.sleep(delay)
@@ -216,7 +210,7 @@ def generate_password(
     use_digits=True,
     use_symbols=True
 ):
-    lowercase = "abcdefghijkmnopqrstuvwxyz"  # removed l
+    lowercase = "abcdefghijkmnopqrstuvwxyz"  # always included
     uppercase = "ABCDEFGHJKLMNPQRSTUVWXYZ" if use_upper else ""
     digits = "23456789" if use_digits else ""
     symbols = "!@#$%^&*()-_=+[]{};:,.<>?" if use_symbols else ""
@@ -227,6 +221,78 @@ def generate_password(
         raise ValueError("No character sets selected.")
 
     return "".join(secrets.choice(pool) for _ in range(length))
+
+def show_banner():
+    banner = Text()
+    banner.append("RX7Pass\n", style="bold cyan")
+    banner.append("Secure CLI Password Vault 🔐", style="dim")
+
+    console.print(
+        Panel(
+            Align.center(banner),
+            border_style="cyan",
+            padding=(1, 4)
+        )
+    )
+
+def show_menu():
+    menu_text = Text()
+    menu_text.append("1. Add password\n", style="bold")
+    menu_text.append("2. List services\n")
+    menu_text.append("3. View entry\n")
+    menu_text.append("4. Delete entry\n")
+    menu_text.append("5. Copy password to clipboard\n")
+    menu_text.append("6. Generate password\n")
+    menu_text.append("7. Exit\n")
+
+    console.print(
+        Panel(
+            menu_text,
+            title="RX7Pass Menu",
+            border_style="blue"
+        )
+    )
+
+def show_entries_table(entries, key):
+    table = Table(title="Stored Passwords", header_style="bold magenta")
+
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Service", style="cyan")
+    table.add_column("Username", style="green")
+
+    for idx, (eid, service_enc, user_enc) in enumerate(entries, 1):
+        service = decrypt_field(service_enc, key)
+        username = decrypt_field(user_enc, key)
+        table.add_row(str(idx), service, username)
+
+    console.print(table)
+
+def success(msg):
+    console.print(f"✅ {msg}", style="green")
+
+def error(msg):
+    console.print(f"❌ {msg}", style="red")
+
+def warning(msg):
+    console.print(f"⚠️ {msg}", style="yellow")
+
+def show_entry(service, username, password, notes):
+    body = Text()
+    body.append(f"Service: {service}\n", style="cyan")
+    body.append(f"Username: {username}\n", style="green")
+    body.append(f"Password: {password}\n", style="bold red")
+
+    if notes:
+        body.append("\nNotes:\n", style="bold yellow")
+        body.append(notes, style="yellow")
+
+    console.print(
+        Panel(
+            body,
+            title="Password Entry",
+            border_style="red"
+        )
+    )
 
 if __name__ == "__main__":
     main()
